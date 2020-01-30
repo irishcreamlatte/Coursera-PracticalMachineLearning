@@ -1,0 +1,201 @@
+---
+title: "Weight Lifting Exercise Analysis"
+author: "ggh725"
+output: html_document
+geometry: margin=1in 
+---
+
+## Introduction ## 
+
+The goal for this project is to use data collected using accelerometers from 6 participants in order to predict the manner in which a certain exercise was performed. Specifically, the participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways: 
+1. Exactly according to the specification (Class A); 
+2. Throwing the elbows to the front (Class B); 
+3. Lifting the dumbbell only halfway (Class C); 
+4. Lowering the dumbbell only halfway (Class D); and 
+5. Throwing the hips to the front (Class E). 
+
+Models were developed using various algorithms based on the assumption that Class can be predicted based on the different explanatory variables (the measurements). The models' effectiveness were assessed based on the accuracy of their predictions. Based on the analysis, the Random Forest model had the highest accuracy. Thus, the Random Forest model was used to generate the final predictions. 
+
+## Analysis ## 
+
+```{r loading packages and data, include = FALSE}
+library(tidyverse)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                     na.strings = c("NA", "#DIV/0!", ""))
+testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                    na.strings = c("NA", "#DIV/0!", ""))
+```
+
+```{r exploratory analysis, include=FALSE}
+dim(training)
+names(training)
+summary(training)
+glimpse(training) 
+head(training)
+```
+
+This analysis used the Weight Lifting Exercises dataset. The training dataset contained 19,622 observations of 160 variables. The dependent variable is Class. A visual examination showed that Class A had the highest frequency, while Class D had the lowest. 
+
+```{r figure 1, echo = FALSE,  fig.height=3, fig.width=3}
+training %>% group_by(classe) %>% 
+    summarize(n = n()) %>% 
+    ggplot(aes(classe, n, fill = classe)) + 
+    geom_bar(stat = "identity") +
+    labs(title = "Total by Class", x = "Class", y = "Number")
+```
+
+Before the analysis, the training and testing datasets needed to be cleaned. First, the variables with NAs were removed. Second, variables which were not necessary for the analysis (such as X and user_name, among others) were also removed. 
+
+```{r data cleaning, include=FALSE}
+training <- training[,colSums(is.na(training)) == 0]
+testing <- testing[,colSums(is.na(testing)) == 0]
+
+training <- training %>% select(roll_belt:classe)
+testing <- testing %>% select(roll_belt:magnet_forearm_z)
+``` 
+
+In order to improve the models' performance, the cross validation technique was adapted. Specifically, 60% of the training set was reserved for training the model, and 40% was reserved for validation. The final model will be chosen based on the results of this validation. Specifically, the model with the highest accuracy will be used on the testing dataset. 
+
+```{r cross validation sets, include=FALSE}
+set.seed(123, sample.kind = "Rounding")
+train_index <- createDataPartition(training$classe, p = 0.6, list = FALSE)
+cv_train <- training %>% slice(train_index)
+cv_test <- training %>% slice(-train_index)
+``` 
+
+# Decision Tree # 
+
+The first model was a Decision Tree, which split and categorized the training set based on the different explanatory variables. The end nodes of the resulting tree contain the different predictors for Class. The testing set data will be assessed against these predictors, and the accuracy of the Decision Tree model will be gauged based on these predictions. 
+
+The Decision Tree model had an accuracy of 0.774025.
+
+```{r decision tree, include=FALSE}
+set.seed(1234, sample.kind = "Rounding")
+rpart_fit <- rpart(classe ~ ., data = cv_train, method = "class")
+rpart_pred <- predict(rpart_fit, cv_test, type = "class")
+dt_accuracy <- confusionMatrix(rpart_pred, cv_test$classe)$overall[1]
+```
+
+```{r results table1, echo=FALSE}
+options(pillar.sigfig = 6)
+results <- tibble(Method = "Decision Tree", 
+                  Accuracy = confusionMatrix(rpart_pred, cv_test$classe)$overall[1])
+results
+```
+
+# k-Nearest Neighbor # 
+
+The second model used the k-Nearest Neighbor (kNN) technique. Under this technique, actions were classified into different Classes based on the classification of the nearest neighbors. In other words, predictions are based on the Class of the "closest" other actions to the action in question. 
+
+The kNN model had an accuracy of 0.896380, which is better than the Decision Tree model. 
+
+```{r knn, include=FALSE}
+set.seed(1234, sample.kind = "Rounding")
+knn_fit <- knn3(classe ~ ., data = cv_train)
+
+pred_knn <- predict(knn_fit, cv_test, type = "class")
+
+knn_accuracy <- confusionMatrix(pred_knn, cv_test$classe)$overall[1]
+```
+
+```{r results table2, echo=FALSE}
+results <- bind_rows(results, 
+                     tibble(Method = "k-Nearest Neighbor", 
+                            Accuracy = confusionMatrix(pred_knn, cv_test$classe)$overall[1]))
+results
+```
+
+# Random Forest # 
+
+The third model used the Random Forest technique. This approach is a meta-estimator which takes the average of multiple decision trees. By using the results from more decision trees, the model becomes more robust and effective, thereby improving accuracy. 
+
+The Random Forest model had an accuracy of 0.994520, which is higher than the kNN model. 
+
+```{r random forest, include=FALSE}
+set.seed(1234, sample.kind = "Rounding")
+
+rf_fit <- randomForest(classe ~ ., data = cv_train)
+pred_rf <- predict(rf_fit, cv_test)
+rf_accuracy <- confusionMatrix(pred_rf, cv_test$classe)$overall[1]
+```
+
+```{r results table3, echo=FALSE}
+results <- bind_rows(results, 
+                     tibble(Method = "Random Forest", 
+                            Accuracy = confusionMatrix(pred_rf, cv_test$classe)$overall[1]))
+results
+```
+
+# Principal Component Analysis # 
+
+Even with the earlier efforts to tidy the data, there are still 53 variables in the training set. The dimensions of this dataset can still be further decreased, while maximizing its variability using Principal Component Analysis (PCA). In short, the dataset can be transformed in a way that maintains the distances between the rows, with a decreasing variance in the columns. The kNN and Random Forest techniques can be performed on this smaller dataset. 
+
+```{r pca, include=FALSE}
+set.seed(1234, sample.kind = "Rounding")
+x <- cv_train[,1:52] %>% as.matrix()
+pca <- prcomp(x)
+summary(pca)
+```
+
+Based on the PCA, the first 9 principal components explain 95% of the variance in the data. In fact, more information can be seen by looking at the 8th and 9th principal components rather than the first 2. 
+
+```{r pca figures, echo=FALSE, fig.height=3, fig.width=3}
+data.frame(pca$x[,1:2], Class = cv_train$classe) %>% 
+    ggplot(aes(PC1, PC2, fill = Class)) + 
+    geom_point(cex = 3, pch = 21) + 
+    coord_fixed(ratio = 1)
+
+data.frame(pca$x[,8:9], Class = cv_train$classe) %>% 
+    ggplot(aes(PC8, PC9, fill = Class)) + 
+    geom_point(cex = 3, pch = 21) + 
+    coord_fixed(ratio = 1)
+```
+
+```{r knn on pca, include=FALSE}
+x_train <- pca$x[,1:9]
+y <- factor(cv_train$classe)
+fit_pca <- knn3(x_train, y)
+
+
+col_means <- colMeans(cv_test[,1:52])
+x_test <- sweep(as.matrix(cv_test[,1:52]), 2, col_means) %*%
+    pca$rotation
+x_test <- x_test[,1:9]
+
+pred_pca_knn <- predict(fit_pca, x_test, type = "class")
+pca_knn_accuracy <- confusionMatrix(pred_pca_knn, cv_test$classe)$overall[1]
+```
+
+```{r rf on pca, include=FALSE}
+fit_pca_rf <- randomForest(x_train, y)
+pred_pca_rf <- predict(fit_pca_rf, x_test, type = "class")
+pca_rf_accuracy <- confusionMatrix(pred_pca_rf, cv_test$classe)$overall[1]
+```
+
+However, the PCA failed to improve on the accuracy of the earlier kNN and Random Forest models. The accuracy of the kNN and Random Forest models on the dimension reduced training set were only 0.809712 and 0.920979, respectively. 
+
+```{r results table4, echo=FALSE}
+results <- bind_rows(results, 
+                     tibble(Method = "kNN on PCA Dataset", 
+                            Accuracy = confusionMatrix(pred_pca_knn, cv_test$classe)$overall[1]
+))
+results <- bind_rows(results, 
+                     tibble(Method = "Random Forest on PCA Dataset", 
+                            Accuracy = confusionMatrix(pred_pca_rf, cv_test$classe)$overall[1]
+))
+results
+```
+
+## Final Model ## 
+
+In light of the results of the cross validation, the Random Forest model will be used to predict the Classes of the actions in the testing dataset. The expected out-of-sample error is 0.005. 
+
+```{r final model}
+prediction <- predict(rf_fit, testing)
+prediction
+```
